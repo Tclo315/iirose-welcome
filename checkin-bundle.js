@@ -27,7 +27,7 @@
   window.__CHECKIN_LOADED__ = true;
 
   var CONFIG = {
-    roomId: '',           // ★ 签到房间id：进目标房间跑 status()，把"当前房间"的值填到这里
+    roomId: '638c0ce40f0a6',  // ★ 签到房间id（小椰常驻的房间）
     time: '06:00',        // 签到日界点：当天此时刻 → 次日此时刻算一个签到日
     message: '/z',        // 发送的内容
     color: 'ffffff',      // 消息颜色，6位十六进制，不带#
