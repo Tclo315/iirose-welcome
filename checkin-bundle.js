@@ -1,24 +1,23 @@
 /* ============================================================
- * iiRose 每日签到插件 v2.2（checkin-bundle.js）
+ * iiRose 每日签到插件 v2.3（checkin-bundle.js）
  * 由 loader 从远端加载，装在 iirose 工具-终端里
  *
- * 签到房间绑定：
- *   首次检测到"小椰与我同房间"时，自动锁定该房间为签到房间（存 localStorage）。
- *   之后：在绑定房间里 → 小椰在就签、不在就等待；
- *         在其他任何房间 → 完全休眠，不发也不等待（小椰不该出现在别的房间）。
- *   换房间签到：__CHECKIN__.rebind() 清除绑定，下次与小椰同房间时重新锁定。
+ * 签到房间：写死在下方 CONFIG.roomId 里。
+ *   在签到房间里 → 小椰在就签、不在就等待（5秒一轮询）；
+ *   在其他任何房间 → 完全休眠，不发也不等待。
+ *   获取房间id：进入目标房间后运行 __CHECKIN__.status()，"当前房间"一栏的值就是。
  *
  * 签到日模型：以每天 06:00 为界。一个签到日 = 当天06:00 → 次日06:00。
  *   过了 0 点若昨天的还没签，仍会继续等条件补发（不会作废），到次日06:00才翻篇。
  *
- * 每 5 秒检查一次（读客户端内存里的全站名单 Objs.mapHolder.Assets.userJson，
- * 开销极小；小椰上线 ≤5 秒被检测到）。
+ * 名单来源：客户端内存里的全站成员表 Objs.mapHolder.Assets.userJson
+ *（开销极小；小椰上线 ≤5 秒被检测到）。
  *
- * 控制台临时调整（改完立即生效，刷新后恢复默认）：
+ * 控制台临时调整（改完立即生效，刷新后恢复文件里的默认值）：
+ *  __CHECKIN__.roomId = '房间id'          临时指定签到房间
  *  __CHECKIN__.enabled = false            暂停 / true 恢复
  *  __CHECKIN__.time = '07:30'             改签到日界点
  *  __CHECKIN__.targetName = '小椰'        改在场判定的成员
- *  __CHECKIN__.rebind()                   清除房间绑定，重新自动锁定
  *  __CHECKIN__.trigger()                  立即按当前条件试签一次（测试用）
  *  __CHECKIN__.status()                   查看当前各条件状态
  *  localStorage.removeItem('iirose_checkin_last')   清除"本签到日已发"（测试用）
@@ -28,17 +27,17 @@
   window.__CHECKIN_LOADED__ = true;
 
   var CONFIG = {
+    roomId: '',           // ★ 签到房间id：进目标房间跑 status()，把"当前房间"的值填到这里
     time: '06:00',        // 签到日界点：当天此时刻 → 次日此时刻算一个签到日
     message: '/z',        // 发送的内容
     color: 'ffffff',      // 消息颜色，6位十六进制，不带#
     enabled: true,        // 总开关
-    targetName: '小椰',   // 在场判定的成员（只认绑定房间里这个人在不在）
+    targetName: '小椰',   // 在场判定的成员（只认签到房间里这个人在不在）
     strictList: true      // 名单读不到时 true=不发送（保守），false=照常发送
   };
   window.__CHECKIN__ = CONFIG;
 
   var KEY = 'iirose_checkin_last';   // 本签到日已发记录
-  var KEY_ROOM = 'iirose_checkin_room';  // 绑定的签到房间id
 
   function pad(n) { return (n < 10 ? '0' : '') + n; }
   function dateStr(d) {
@@ -146,29 +145,20 @@
       return;
     }
 
-    // ── 房间绑定 ──
-    var bound = lsGet(KEY_ROOM);
-    if (!bound) {
-      // 未绑定：只在"与小椰同房间"的那一刻锁定，其他时候静默（不算等待）
-      var p0 = targetInRoom(found.win, myRoom);
-      if (p0 === true) {
-        bound = myRoom;
-        lsSet(KEY_ROOM, bound);
-        console.log('%c[签到] 已绑定签到房间：' + bound + '（以后只在这个房间签到，rebind() 可改绑）', 'color:#0a0');
-      } else {
-        noteState('未绑定签到房间——进入' + CONFIG.targetName + '所在房间后会自动绑定');
-        return;
-      }
+    // ── 只在配置的签到房间行动，其他房间休眠 ──
+    var target = String(CONFIG.roomId || '');
+    if (!target) {
+      noteState('未配置签到房间（roomId 为空）——进目标房间跑 status()，把"当前房间"的值填入 CONFIG.roomId');
+      return;
     }
-    if (myRoom !== bound) {
-      noteState('当前不在签到房间（' + bound + '），休眠中');
-      return;   // 别的房间：不发、不等待
+    if (myRoom !== target) {
+      noteState('当前不在签到房间，休眠中');
+      return;
     }
 
-    // ── 在绑定房间内 ──
     if (lsGet(KEY) === dayKey()) return;   // 本签到日已发过
 
-    var p = targetInRoom(found.win, bound);
+    var p = targetInRoom(found.win, target);
     if (p === null) {
       if (CONFIG.strictList) {
         noteState('读不到房间名单（iirose 可能改版），保守模式暂不签到——请反馈给开发者');
@@ -194,33 +184,27 @@
   CONFIG.status = function () {
     var found = findSock();
     var myRoom = found ? roomOf(found.win) : null;
-    var bound = lsGet(KEY_ROOM);
-    var p = found && bound ? targetInRoom(found.win, bound) : null;
+    var p = found && CONFIG.roomId ? targetInRoom(found.win, String(CONFIG.roomId)) : null;
     console.log('[签到状态]', {
+      签到房间: CONFIG.roomId || '未配置',
+      当前房间: myRoom || '未连接',
+      在签到房间: CONFIG.roomId ? (myRoom === String(CONFIG.roomId) ? '是' : '否（休眠）') : '—（未配置）',
       签到日界点: CONFIG.time,
       当前签到日: dayKey(),
       本签到日已发: lsGet(KEY) === dayKey(),
-      绑定房间: bound || '未绑定',
-      当前房间: myRoom || '未连接',
-      在绑定房间: bound ? (myRoom === bound ? '是' : '否（休眠）') : '—（未绑定）',
       判定成员: CONFIG.targetName,
-      成员在绑定房间: p === true ? '在' : (p === false ? '不在' : '名单读不到'),
+      成员在签到房间: p === true ? '在' : (p === false ? '不在' : '名单读不到'),
       开关: CONFIG.enabled ? '开' : '关'
     });
   };
   CONFIG.trigger = function () { attemptSend(); };
-  CONFIG.rebind = function () {
-    lsDel(KEY_ROOM);
-    console.log('[签到] 已清除房间绑定——下次与' + CONFIG.targetName + '同房间时重新自动锁定');
-    attemptSend();   // 若当前恰好同房间，立即重新绑定
-  };
 
   // 主循环：每 5 秒查一次。前台最迟 5 秒反应；后台标签页浏览器会把定时器
   // 降到至少 1 分钟一次（可接受）。电脑睡眠唤醒后靠这个循环自然补上。
   setInterval(attemptSend, 5000);
   setTimeout(attemptSend, 1000);   // 加载完先查一次（上线直接补签）
 
-  console.log('%c[签到插件 v2.2] 已启动：签到日 ' + CONFIG.time + ' 起，绑定房间内 ' + CONFIG.targetName + ' 在场时自动发 ' + CONFIG.message,
+  console.log('%c[签到插件 v2.3] 已启动：签到日 ' + CONFIG.time + ' 起，在签到房间内 ' + CONFIG.targetName + ' 在场时自动发 ' + CONFIG.message,
     'background:#08c;color:#fff;padding:2px 6px');
-  console.log('[签到插件] status() 看状态 / trigger() 试签 / rebind() 改绑房间');
+  console.log('[签到插件] status() 看状态 / trigger() 试签');
 })();
